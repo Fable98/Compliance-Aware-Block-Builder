@@ -141,3 +141,26 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ---- Rust (compliance engine / block builder) ----
+target/
+Cargo.lock
+**/*.rs.bk
+
+# ---- Python (FastAPI AI explainer) ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ---- Local devnet / database state ----
+anvil.log
+*.db
+*.sqlite3
+postgres-data/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
