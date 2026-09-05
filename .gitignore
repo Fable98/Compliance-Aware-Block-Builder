@@ -1,0 +1,19 @@
+# Rust
+engine/target/
+**/*.rs.bk
+
+# Env files
+.env
+*.env
+
+# Node (for later)
+node_modules/
+.next/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
