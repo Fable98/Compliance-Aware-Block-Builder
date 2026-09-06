@@ -10,12 +10,13 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+const AI_EXPLAINER_URL = process.env.AI_EXPLAINER_URL || 'http://127.0.0.1:8000/explain';
+
 const fastify = Fastify({ logger: true });
 
 await fastify.register(cors, { origin: true });
 await fastify.register(websocket);
 
-// Track connected WebSocket clients so we can broadcast updates
 const clients = new Set<any>();
 
 fastify.get('/ws', { websocket: true }, (socket) => {
@@ -36,10 +37,9 @@ function broadcast(data: unknown) {
   }
 }
 
-// REST: recent compliance decisions (pre-execution)
 fastify.get('/api/decisions', async (request, reply) => {
   const result = await pool.query(
-    `SELECT tx_hash, sender, recipient, decision, risk_score, reason_codes, created_at
+    `SELECT tx_hash, sender, recipient, decision, risk_score, reason_codes, ai_explanation, created_at
      FROM compliance_decisions
      ORDER BY created_at DESC
      LIMIT 50`
@@ -47,7 +47,6 @@ fastify.get('/api/decisions', async (request, reply) => {
   return result.rows;
 });
 
-// REST: recent blocks (post-execution proposer attribution)
 fastify.get('/api/blocks', async (request, reply) => {
   const result = await pool.query(
     `SELECT block_hash, block_number, builder_address, compliance_status, tx_count, created_at
@@ -58,7 +57,6 @@ fastify.get('/api/blocks', async (request, reply) => {
   return result.rows;
 });
 
-// Simple summary stats for dashboard header
 fastify.get('/api/stats', async (request, reply) => {
   const decisions = await pool.query(
     `SELECT decision, COUNT(*) FROM compliance_decisions GROUP BY decision`
@@ -69,21 +67,65 @@ fastify.get('/api/stats', async (request, reply) => {
   return { decisions: decisions.rows, blocks: blocks.rows };
 });
 
-// Poll Postgres periodically and broadcast new rows to connected dashboards
+async function generateExplanation(row: {
+  tx_hash: string;
+  decision: string;
+  risk_score: number;
+  reason_codes: string[];
+}) {
+  try {
+    const response = await fetch(AI_EXPLAINER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tx: row.tx_hash,
+        decision: row.decision,
+        risk_score: row.risk_score,
+        reasons: row.reason_codes,
+      }),
+    });
+
+    if (!response.ok) {
+      fastify.log.error(`AI explainer returned ${response.status} for ${row.tx_hash}`);
+      return;
+    }
+
+    const data = (await response.json()) as { narrative: string };
+
+    await pool.query(
+      `UPDATE compliance_decisions SET ai_explanation = $1 WHERE tx_hash = $2`,
+      [data.narrative, row.tx_hash]
+    );
+
+    fastify.log.info(`AI explanation saved for ${row.tx_hash}`);
+    broadcast({ type: 'explanation_ready', tx_hash: row.tx_hash, narrative: data.narrative });
+  } catch (err) {
+    fastify.log.error(`Failed to generate explanation for ${row.tx_hash}: ${err}`);
+  }
+}
+
 let lastDecisionCount = 0;
 setInterval(async () => {
-  const result = await pool.query(
-    `SELECT tx_hash, decision, risk_score, reason_codes, created_at
-     FROM compliance_decisions
-     ORDER BY created_at DESC
-     LIMIT 1`
-  );
-  if (result.rows.length > 0) {
-    const countResult = await pool.query(`SELECT COUNT(*) FROM compliance_decisions`);
-    const currentCount = parseInt(countResult.rows[0].count, 10);
-    if (currentCount !== lastDecisionCount) {
-      lastDecisionCount = currentCount;
-      broadcast({ type: 'new_decision', data: result.rows[0] });
+  const countResult = await pool.query(`SELECT COUNT(*) FROM compliance_decisions`);
+  const currentCount = parseInt(countResult.rows[0].count, 10);
+
+  if (currentCount !== lastDecisionCount) {
+    lastDecisionCount = currentCount;
+
+    const result = await pool.query(
+      `SELECT tx_hash, decision, risk_score, reason_codes, ai_explanation, created_at
+       FROM compliance_decisions
+       ORDER BY created_at DESC
+       LIMIT 1`
+    );
+
+    if (result.rows.length > 0) {
+      const latest = result.rows[0];
+      broadcast({ type: 'new_decision', data: latest });
+
+      if ((latest.decision === 'BLOCK' || latest.decision === 'FLAG') && !latest.ai_explanation) {
+        generateExplanation(latest);
+      }
     }
   }
 }, 2000);

@@ -22,6 +22,7 @@ type Decision = {
   decision: string;
   risk_score: number;
   reason_codes: string[];
+  ai_explanation: string | null;
   created_at: string;
 };
 
@@ -196,6 +197,12 @@ export default function Dashboard() {
                     <p><span className="text-neutral-400">Risk Score:</span> <span className="text-white">{selected.risk_score}</span></p>
                     <p><span className="text-neutral-400">Reason Codes:</span> <span className="text-white">{selected.reason_codes.join(', ') || 'None'}</span></p>
                   </div>
+                  {selected.ai_explanation && (
+                    <div className="border-t border-neutral-800 pt-4 mt-4">
+                      <p className="text-neutral-400 text-sm mb-2">AI-Generated Compliance Narrative</p>
+                      <p className="text-neutral-200 text-sm leading-relaxed">{selected.ai_explanation}</p>
+                    </div>
+                  )}
                   <div className="border-t border-neutral-800 pt-4 mt-4">
                     <p className="text-neutral-400 text-sm mb-2">Pipeline: Ingestion → Sanctions Lookup → Entity Attribution → Policy Decision → Builder Action</p>
                   </div>
