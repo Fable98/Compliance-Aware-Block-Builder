@@ -11,6 +11,8 @@ pub async fn simulate_with_revm(
     from: Address,
     to: Address,
     value_wei: u64,
+    calldata: Vec<u8>,
+    gas_limit: Option<u64>,
 ) -> eyre::Result<(bool, u64)> {
     use revm::{
         database::InMemoryDB,
@@ -35,9 +37,11 @@ pub async fn simulate_with_revm(
     let to_balance = provider.get_balance(to).await?;
     let to_nonce = provider.get_transaction_count(to).await?;
     let to_code = provider.get_code_at(to).await?;
+    let is_contract = !to_code.is_empty();
+
     let mut to_info = AccountInfo::from_balance(RU256::from_be_bytes(to_balance.to_be_bytes::<32>()));
     to_info.nonce = to_nonce;
-    if !to_code.is_empty() {
+    if is_contract {
         use revm::state::Bytecode;
         let bytecode = Bytecode::new_raw(to_code.to_vec().into());
         to_info.code_hash = bytecode.hash_slow();
@@ -50,7 +54,13 @@ pub async fn simulate_with_revm(
     tx_env.caller = from_r;
     tx_env.kind = TxKind::Call(to_r);
     tx_env.value = RU256::from(value_wei);
-    tx_env.gas_limit = 21000;
+    tx_env.data = calldata.into();
+    // Use specified gas_limit, or allocate 200k for contract calls and 21k for simple ETH transfers
+    tx_env.gas_limit = gas_limit.unwrap_or(if is_contract || !tx_env.data.is_empty() {
+        200_000
+    } else {
+        21_000
+    });
     tx_env.nonce = live_nonce;
 
     let mut evm = ctx.build_mainnet();
@@ -105,11 +115,13 @@ async fn submit_transaction(
     from: Address,
     to: Address,
     label: &str,
+    calldata: Vec<u8>,
+    gas_limit: Option<u64>,
 ) -> eyre::Result<()> {
     let value_wei = 1_000_000_000_000_000_000u64; // 1 ETH
 
     // Structural Guarantee: All submissions must pass the revm in-process dry-run against Anvil live state
-    let (sim_ok, gas_used) = simulate_with_revm(provider, from, to, value_wei).await?;
+    let (sim_ok, gas_used) = simulate_with_revm(provider, from, to, value_wei, calldata.clone(), gas_limit).await?;
     if !sim_ok {
         println!(
             "[{}] revm in-process simulation REVERTED — refusing to submit to chain.",
@@ -122,10 +134,17 @@ async fn submit_transaction(
         label, gas_used
     );
 
-    let tx = TransactionRequest::default()
+    let mut tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
         .with_value(U256::from(value_wei));
+
+    if !calldata.is_empty() {
+        tx = tx.with_input(calldata);
+    }
+    if let Some(g) = gas_limit {
+        tx = tx.with_gas_limit(g);
+    }
 
     match provider.send_transaction(tx).await {
         Ok(pending) => {
@@ -197,7 +216,7 @@ async fn main() -> eyre::Result<()> {
     println!("Compliance decision: {:?}", decision);
 
     if decision.decision == "ALLOW" {
-        submit_transaction(&clean_provider, clean_sender_address, recipient, "Scenario 1").await?;
+        submit_transaction(&clean_provider, clean_sender_address, recipient, "Scenario 1", vec![], None).await?;
     } else {
         println!("[Scenario 1] BLOCKED before submission to chain.");
     }
@@ -221,7 +240,7 @@ async fn main() -> eyre::Result<()> {
     println!("Compliance decision: {:?}", decision2);
 
     if decision2.decision == "ALLOW" {
-        submit_transaction(&provider, sender_address, sanctioned, "Scenario 2").await?;
+        submit_transaction(&provider, sender_address, sanctioned, "Scenario 2", vec![], None).await?;
     } else {
         println!("[Scenario 2] BLOCKED before submission to chain — compliance engine caught it.");
     }
@@ -245,7 +264,7 @@ async fn main() -> eyre::Result<()> {
     println!("Compliance decision: {:?}", decision3);
 
     if decision3.decision == "ALLOW" {
-        submit_transaction(&provider, sender_address, clean_recipient, "Scenario 3").await?;
+        submit_transaction(&provider, sender_address, clean_recipient, "Scenario 3", vec![], None).await?;
     } else if decision3.decision == "FLAG" {
         println!(
             "[Scenario 3] FLAGGED for human review / enhanced due diligence (risk score: {}) — 1-hop graph walk detected indirect exposure to sanctioned entity.",
