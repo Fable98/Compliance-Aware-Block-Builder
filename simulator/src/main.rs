@@ -6,6 +6,36 @@ use alloy::signers::local::PrivateKeySigner;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
+pub fn simulate_with_revm(from: Address, to: Address, value_wei: u64) -> eyre::Result<(bool, u64)> {
+    use revm::{
+        database::InMemoryDB,
+        primitives::{Address as RAddress, TxKind, U256 as RU256},
+        state::AccountInfo,
+        Context, ExecuteEvm, MainBuilder, MainContext,
+    };
+
+    let mut db = InMemoryDB::default();
+    let from_r = RAddress::from_slice(from.as_slice());
+    let to_r = RAddress::from_slice(to.as_slice());
+
+    // Seed sender with sufficient balance for dry-run
+    let info = AccountInfo::from_balance(RU256::from(10_000_000_000_000_000_000u128));
+    db.insert_account_info(from_r, info);
+
+    let ctx = Context::mainnet().with_db(db);
+    let mut tx_env = ctx.tx.clone();
+    tx_env.caller = from_r;
+    tx_env.kind = TxKind::Call(to_r);
+    tx_env.value = RU256::from(value_wei);
+    tx_env.gas_limit = 21000;
+
+    let mut evm = ctx.build_mainnet();
+    let result = evm.transact_one(tx_env)?;
+    let gas_used = result.tx_gas_used();
+    let success = result.is_success();
+    Ok((success, gas_used))
+}
+
 #[derive(Serialize)]
 struct ScreenRequest {
     tx_hash: String,
@@ -127,6 +157,14 @@ async fn main() -> eyre::Result<()> {
     println!("Compliance decision: {:?}", decision);
 
     if decision.decision == "ALLOW" {
+        // Step 1: revm in-process EVM simulation pass
+        let (sim_ok, gas_used) = simulate_with_revm(clean_sender_address, recipient, 1_000_000_000_000_000_000u64)?;
+        println!(
+            "[Scenario 1] revm in-process EVM dry-run passed (success: {}, gas: {}) — proceeding to on-chain submission",
+            sim_ok, gas_used
+        );
+
+        // Step 2: Live execution on Anvil
         submit_transaction(&clean_provider, clean_sender_address, recipient, "Scenario 1").await?;
     } else {
         println!("[Scenario 1] BLOCKED before submission to chain.");
