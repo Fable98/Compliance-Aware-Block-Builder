@@ -115,10 +115,10 @@ async fn submit_transaction(
     from: Address,
     to: Address,
     label: &str,
+    value_wei: u64,
     calldata: Vec<u8>,
     gas_limit: Option<u64>,
 ) -> eyre::Result<()> {
-    let value_wei = 1_000_000_000_000_000_000u64; // 1 ETH
 
     // Structural Guarantee: All submissions must pass the revm in-process dry-run against Anvil live state
     let (sim_ok, gas_used) = simulate_with_revm(provider, from, to, value_wei, calldata.clone(), gas_limit).await?;
@@ -176,6 +176,9 @@ const SANCTIONED_ADDRESS: &str = "0x0330070FD38Ec3bB94F58FA55D40368271E9e54A";
 // Anvil default account #3 (clean recipient)
 const CLEAN_RECIPIENT: &str = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
 
+// Counter.sol deployed to local Anvil devnet via forge create
+const COUNTER_CONTRACT_ADDRESS: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     dotenvy::dotenv().ok();
@@ -216,7 +219,7 @@ async fn main() -> eyre::Result<()> {
     println!("Compliance decision: {:?}", decision);
 
     if decision.decision == "ALLOW" {
-        submit_transaction(&clean_provider, clean_sender_address, recipient, "Scenario 1", vec![], None).await?;
+        submit_transaction(&clean_provider, clean_sender_address, recipient, "Scenario 1", 1_000_000_000_000_000_000u64, vec![], None).await?;
     } else {
         println!("[Scenario 1] BLOCKED before submission to chain.");
     }
@@ -240,7 +243,7 @@ async fn main() -> eyre::Result<()> {
     println!("Compliance decision: {:?}", decision2);
 
     if decision2.decision == "ALLOW" {
-        submit_transaction(&provider, sender_address, sanctioned, "Scenario 2", vec![], None).await?;
+        submit_transaction(&provider, sender_address, sanctioned, "Scenario 2", 1_000_000_000_000_000_000u64, vec![], None).await?;
     } else {
         println!("[Scenario 2] BLOCKED before submission to chain — compliance engine caught it.");
     }
@@ -264,7 +267,7 @@ async fn main() -> eyre::Result<()> {
     println!("Compliance decision: {:?}", decision3);
 
     if decision3.decision == "ALLOW" {
-        submit_transaction(&provider, sender_address, clean_recipient, "Scenario 3", vec![], None).await?;
+        submit_transaction(&provider, sender_address, clean_recipient, "Scenario 3", 1_000_000_000_000_000_000u64, vec![], None).await?;
     } else if decision3.decision == "FLAG" {
         println!(
             "[Scenario 3] FLAGGED for human review / enhanced due diligence (risk score: {}) — 1-hop graph walk detected indirect exposure to sanctioned entity.",
@@ -272,6 +275,41 @@ async fn main() -> eyre::Result<()> {
         );
     } else {
         println!("[Scenario 3] BLOCKED before submission to chain.");
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+    println!("\n=== Scenario 4: Contract call (calldata + revm parity demo) ===");
+    let contract_address = Address::from_str(COUNTER_CONTRACT_ADDRESS)?;
+    let fake_tx_hash_4 = "0xsim004";
+
+    // increment() selector: 0xd09de08a
+    let increment_calldata: Vec<u8> = vec![0xd0, 0x9d, 0xe0, 0x8a];
+
+    let decision4 = screen_transaction(
+        &http_client,
+        &engine_url,
+        fake_tx_hash_4,
+        &format!("{:?}", clean_sender_address),
+        &format!("{:?}", contract_address),
+    )
+    .await?;
+
+    println!("Compliance decision: {:?}", decision4);
+
+    if decision4.decision == "ALLOW" {
+        submit_transaction(
+            &clean_provider,
+            clean_sender_address,
+            contract_address,
+            "Scenario 4",
+            0u64,
+            increment_calldata,
+            Some(200_000),
+        )
+        .await?;
+    } else {
+        println!("[Scenario 4] Screening did not return ALLOW — skipping contract call.");
     }
 
     Ok(())
