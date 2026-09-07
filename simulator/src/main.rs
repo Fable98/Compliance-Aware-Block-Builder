@@ -31,6 +31,20 @@ pub async fn simulate_with_revm(
     info.nonce = live_nonce;
     db.insert_account_info(from_r, info);
 
+    // Also seed recipient state (balance, nonce, bytecode if contract)
+    let to_balance = provider.get_balance(to).await?;
+    let to_nonce = provider.get_transaction_count(to).await?;
+    let to_code = provider.get_code_at(to).await?;
+    let mut to_info = AccountInfo::from_balance(RU256::from_be_bytes(to_balance.to_be_bytes::<32>()));
+    to_info.nonce = to_nonce;
+    if !to_code.is_empty() {
+        use revm::state::Bytecode;
+        let bytecode = Bytecode::new_raw(to_code.to_vec().into());
+        to_info.code_hash = bytecode.hash_slow();
+        to_info.code = Some(bytecode);
+    }
+    db.insert_account_info(to_r, to_info);
+
     let ctx = Context::mainnet().with_db(db);
     let mut tx_env = ctx.tx.clone();
     tx_env.caller = from_r;
