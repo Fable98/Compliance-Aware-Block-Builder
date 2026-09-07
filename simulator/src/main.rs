@@ -22,23 +22,9 @@ struct ScreenResponse {
     reasons: Vec<String>,
 }
 
-const ANVIL_RPC: &str = "http://127.0.0.1:8545";
-const ENGINE_URL: &str = "http://127.0.0.1:3001/screen";
-
-// Anvil default account #1 private key (clean sender with zero exposure)
-const CLEAN_SENDER_PRIVATE_KEY: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
-
-// Anvil default account #0 private key (sender used for sanctions & indirect exposure scenarios)
-const SENDER_PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-
-// A real OFAC-sanctioned address from our seeded list
-const SANCTIONED_ADDRESS: &str = "0x0330070FD38Ec3bB94F58FA55D40368271E9e54A";
-
-// Anvil default account #3 (clean recipient)
-const CLEAN_RECIPIENT: &str = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
-
 async fn screen_transaction(
     client: &reqwest::Client,
+    engine_url: &str,
     tx_hash: &str,
     sender: &str,
     recipient: &str,
@@ -50,7 +36,7 @@ async fn screen_transaction(
     };
 
     let resp = client
-        .post(ENGINE_URL)
+        .post(engine_url)
         .json(&req)
         .send()
         .await?
@@ -89,8 +75,26 @@ async fn submit_transaction(
     Ok(())
 }
 
+// Anvil default account #1 private key (clean sender with zero exposure)
+const CLEAN_SENDER_PRIVATE_KEY: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+
+// Anvil default account #0 private key (sender used for sanctions & indirect exposure scenarios)
+const SENDER_PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+// A real OFAC-sanctioned address from our seeded list
+const SANCTIONED_ADDRESS: &str = "0x0330070FD38Ec3bB94F58FA55D40368271E9e54A";
+
+// Anvil default account #3 (clean recipient)
+const CLEAN_RECIPIENT: &str = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    dotenvy::dotenv().ok();
+    let anvil_rpc = std::env::var("ANVIL_RPC")
+        .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+    let engine_url = std::env::var("ENGINE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:3001/screen".to_string());
+
     let http_client = reqwest::Client::new();
 
     let clean_signer = PrivateKeySigner::from_str(CLEAN_SENDER_PRIVATE_KEY)?;
@@ -98,14 +102,14 @@ async fn main() -> eyre::Result<()> {
     let clean_wallet = EthereumWallet::from(clean_signer);
     let clean_provider = ProviderBuilder::new()
         .wallet(clean_wallet)
-        .connect_http(ANVIL_RPC.parse()?);
+        .connect_http(anvil_rpc.parse()?);
 
     let signer = PrivateKeySigner::from_str(SENDER_PRIVATE_KEY)?;
     let sender_address = signer.address();
     let wallet = EthereumWallet::from(signer);
     let provider = ProviderBuilder::new()
         .wallet(wallet)
-        .connect_http(ANVIL_RPC.parse()?);
+        .connect_http(anvil_rpc.parse()?);
 
     println!("=== Scenario 1: Clean transaction ===");
     let recipient = Address::from_str(CLEAN_RECIPIENT)?;
@@ -113,6 +117,7 @@ async fn main() -> eyre::Result<()> {
 
     let decision = screen_transaction(
         &http_client,
+        &engine_url,
         fake_tx_hash,
         &format!("{:?}", clean_sender_address),
         &format!("{:?}", recipient),
@@ -136,6 +141,7 @@ async fn main() -> eyre::Result<()> {
 
     let decision2 = screen_transaction(
         &http_client,
+        &engine_url,
         fake_tx_hash_2,
         &format!("{:?}", sender_address),
         &format!("{:?}", sanctioned),
@@ -159,6 +165,7 @@ async fn main() -> eyre::Result<()> {
 
     let decision3 = screen_transaction(
         &http_client,
+        &engine_url,
         fake_tx_hash_3,
         &format!("{:?}", sender_address),
         &format!("{:?}", clean_recipient),

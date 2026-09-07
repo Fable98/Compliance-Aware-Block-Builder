@@ -4127,6 +4127,7 @@ name = "simulator"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "dotenvy",
  "eyre",
  "reqwest",
  "serde",

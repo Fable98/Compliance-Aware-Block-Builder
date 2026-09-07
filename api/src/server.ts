@@ -14,7 +14,12 @@ const AI_EXPLAINER_URL = process.env.AI_EXPLAINER_URL || 'http://127.0.0.1:8000/
 
 const fastify = Fastify({ logger: true });
 
-await fastify.register(cors, { origin: true });
+// Restrict CORS origins in production, permit localhost/dev origins by default
+await fastify.register(cors, {
+  origin: process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',')
+    : true,
+});
 await fastify.register(websocket);
 
 const clients = new Set<any>();

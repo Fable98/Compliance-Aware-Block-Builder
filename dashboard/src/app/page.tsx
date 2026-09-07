@@ -14,6 +14,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || `${API_URL.replace(/^http/, 'ws')}/ws`;
 
 type Decision = {
   tx_hash: string;
@@ -48,8 +49,9 @@ function decisionColor(decision: string) {
 
 function blockStatusColor(status: string) {
   if (status === 'EXPOSED_EXTERNAL') return 'bg-red-600 text-white';
+  if (status === 'COMPLIANT_BUILD') return 'bg-green-600 text-white';
   if (status === 'UNATTRIBUTED') return 'bg-gray-500 text-white';
-  return 'bg-green-600 text-white';
+  return 'bg-neutral-600 text-white';
 }
 
 function shortAddr(addr: string) {
@@ -78,7 +80,7 @@ export default function Dashboard() {
     fetchAll();
 
     // Live updates via WebSocket
-    const ws = new WebSocket(`ws://localhost:3002/ws`);
+    const ws = new WebSocket(WS_URL);
     ws.onmessage = () => {
       fetchAll();
     };

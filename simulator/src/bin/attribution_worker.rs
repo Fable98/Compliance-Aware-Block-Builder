@@ -2,15 +2,18 @@ use alloy::providers::{Provider, ProviderBuilder};
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
-const ANVIL_RPC: &str = "http://127.0.0.1:8545";
-const DATABASE_URL: &str = "postgres://shresthkumar@localhost:5432/compliance_builder";
-
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    let provider = ProviderBuilder::new().connect_http(ANVIL_RPC.parse()?);
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://localhost:5432/compliance_builder".to_string());
+    let anvil_rpc = std::env::var("ANVIL_RPC")
+        .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+
+    let provider = ProviderBuilder::new().connect_http(anvil_rpc.parse()?);
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect(DATABASE_URL)
+        .connect(&database_url)
         .await?;
 
     println!("Attribution worker started. Polling for new blocks...");
@@ -45,7 +48,7 @@ async fn main() -> eyre::Result<()> {
                         }
                         None => {
                             println!(
-                                "[Block {}] proposer {} — no match, status UNATTRIBUTED",
+                                "[Block {}] proposer {} — compliant, status COMPLIANT_BUILD",
                                 block_num, miner
                             );
                             ("COMPLIANT_BUILD", None)

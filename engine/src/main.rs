@@ -98,8 +98,12 @@ async fn main() -> eyre::Result<()> {
         .route("/screen", post(screen_transaction))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3001").await.unwrap();
-    println!("Compliance engine listening on http://127.0.0.1:3001");
+    let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3001".to_string());
+    let bind_addr = format!("{}:{}", host, port);
+
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
+    println!("Compliance engine listening on http://{}", bind_addr);
     axum::serve(listener, app).await.unwrap();
 
     Ok(())
@@ -170,7 +174,7 @@ async fn screen_transaction(
         reasons: reasons.clone(),
     };
 
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO compliance_decisions (tx_hash, sender, recipient, decision, risk_score, reason_codes, policy_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (tx_hash) DO NOTHING",
@@ -183,7 +187,13 @@ async fn screen_transaction(
     .bind(&reasons)
     .bind("v1")
     .execute(&state.db)
-    .await;
+    .await
+    {
+        eprintln!(
+            "[ERROR] Critical audit failure: could not persist decision for tx {}: {:?}",
+            req.tx_hash, e
+        );
+    }
 
     Json(response)
 }

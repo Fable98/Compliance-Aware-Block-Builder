@@ -118,4 +118,7 @@ INSERT INTO address_attributions (address, entity_id, attribution_type, confiden
 ('0xf1c4c44d2dcbcfa704349e3b57628dbd8404e597', 'fdc51272-322c-46dd-a511-2d2330a2b767', 'WALLET', 1.00),
 ('0xf2235d55b2950a0b1317469d72d07ae65b2e27cb', 'fdc51272-322c-46dd-a511-2d2330a2b767', 'WALLET', 1.00),
 ('0xf3701f445b6bdafedbca97d1e477357839e4120d', 'fdc51272-322c-46dd-a511-2d2330a2b767', 'WALLET', 1.00),
-('0xf4377eda661e04b6dda78969796ed31658d602d4', 'fdc51272-322c-46dd-a511-2d2330a2b767', 'WALLET', 1.00);
+('0xf4377eda661e04b6dda78969796ed31658d602d4', 'fdc51272-322c-46dd-a511-2d2330a2b767', 'WALLET', 1.00),
+('0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc', 'c46c5c1c-ac06-4fbe-96a9-d688323328e9', 'VALIDATOR_COINBASE', 1.00)
+ON CONFLICT (address) DO NOTHING;
+
