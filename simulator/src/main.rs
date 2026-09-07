@@ -6,7 +6,12 @@ use alloy::signers::local::PrivateKeySigner;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-pub fn simulate_with_revm(from: Address, to: Address, value_wei: u64) -> eyre::Result<(bool, u64)> {
+pub async fn simulate_with_revm(
+    provider: &impl Provider,
+    from: Address,
+    to: Address,
+    value_wei: u64,
+) -> eyre::Result<(bool, u64)> {
     use revm::{
         database::InMemoryDB,
         primitives::{Address as RAddress, TxKind, U256 as RU256},
@@ -18,8 +23,12 @@ pub fn simulate_with_revm(from: Address, to: Address, value_wei: u64) -> eyre::R
     let from_r = RAddress::from_slice(from.as_slice());
     let to_r = RAddress::from_slice(to.as_slice());
 
-    // Seed sender with sufficient balance for dry-run
-    let info = AccountInfo::from_balance(RU256::from(10_000_000_000_000_000_000u128));
+    // Pull live state from Anvil (actual current balance & nonce)
+    let live_balance = provider.get_balance(from).await?;
+    let live_nonce = provider.get_transaction_count(from).await?;
+
+    let mut info = AccountInfo::from_balance(RU256::from_be_bytes(live_balance.to_be_bytes::<32>()));
+    info.nonce = live_nonce;
     db.insert_account_info(from_r, info);
 
     let ctx = Context::mainnet().with_db(db);
@@ -28,6 +37,7 @@ pub fn simulate_with_revm(from: Address, to: Address, value_wei: u64) -> eyre::R
     tx_env.kind = TxKind::Call(to_r);
     tx_env.value = RU256::from(value_wei);
     tx_env.gas_limit = 21000;
+    tx_env.nonce = live_nonce;
 
     let mut evm = ctx.build_mainnet();
     let result = evm.transact_one(tx_env)?;
@@ -82,10 +92,26 @@ async fn submit_transaction(
     to: Address,
     label: &str,
 ) -> eyre::Result<()> {
+    let value_wei = 1_000_000_000_000_000_000u64; // 1 ETH
+
+    // Structural Guarantee: All submissions must pass the revm in-process dry-run against Anvil live state
+    let (sim_ok, gas_used) = simulate_with_revm(provider, from, to, value_wei).await?;
+    if !sim_ok {
+        println!(
+            "[{}] revm in-process simulation REVERTED — refusing to submit to chain.",
+            label
+        );
+        return Ok(());
+    }
+    println!(
+        "[{}] revm in-process dry-run against Anvil live state PASSED (gas: {}) — submitting on-chain",
+        label, gas_used
+    );
+
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
-        .with_value(U256::from(1_000_000_000_000_000_000u64)); // 1 ETH
+        .with_value(U256::from(value_wei));
 
     match provider.send_transaction(tx).await {
         Ok(pending) => {
@@ -157,14 +183,6 @@ async fn main() -> eyre::Result<()> {
     println!("Compliance decision: {:?}", decision);
 
     if decision.decision == "ALLOW" {
-        // Step 1: revm in-process EVM simulation pass
-        let (sim_ok, gas_used) = simulate_with_revm(clean_sender_address, recipient, 1_000_000_000_000_000_000u64)?;
-        println!(
-            "[Scenario 1] revm in-process EVM dry-run passed (success: {}, gas: {}) — proceeding to on-chain submission",
-            sim_ok, gas_used
-        );
-
-        // Step 2: Live execution on Anvil
         submit_transaction(&clean_provider, clean_sender_address, recipient, "Scenario 1").await?;
     } else {
         println!("[Scenario 1] BLOCKED before submission to chain.");
