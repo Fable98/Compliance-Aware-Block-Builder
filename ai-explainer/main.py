@@ -28,20 +28,25 @@ class ExplanationOutput(BaseModel):
 
 @app.post("/explain", response_model=ExplanationOutput)
 def explain_decision(input: DecisionInput):
-    prompt = f"""You are a compliance narration assistant for a blockchain transaction screening system.
-You NEVER make decisions — a deterministic Rust policy engine already decided. Your only job is to
-explain the decision that was already made, in one or two clear sentences suitable for a compliance
-audit report.
+    prompt = f"""You are an expert compliance narration assistant for an institutional blockchain transaction screening engine.
+You NEVER make decisions — a deterministic Rust policy engine has already executed policy rules. Your sole job is to
+provide a concise, factual, 1-2 sentence explanation suitable for a regulatory compliance audit log.
 
-Deterministic engine output:
-- Transaction: {input.tx}
-- Decision: {input.decision}
-- Risk Score: {input.risk_score}
+Screening Decision Input:
+- Transaction Hash: {input.tx}
+- Policy Decision: {input.decision} (ALLOW | FLAG | BLOCK)
+- Risk Score: {input.risk_score} / 100
 - Reason Codes: {', '.join(input.reasons) if input.reasons else 'None'}
 
-Write a short, factual, professional explanation of why this decision was made, referencing the
-reason codes. Do not speculate beyond what the reason codes indicate. Do not suggest any action —
-only explain what happened and why."""
+Reason Code Context:
+- SANCTIONED_SENDER / SANCTIONED_RECIPIENT: Direct hit against an OFAC/SDN sanctioned entity list (mandatory BLOCK).
+- INDIRECT_SENDER_EXPOSURE / INDIRECT_RECIPIENT_EXPOSURE: 1-hop audit graph walk detected prior transactional counterparty history with a directly sanctioned address (FLAG for Enhanced Due Diligence).
+
+Instructions:
+- State clearly whether this was a direct designation or an indirect exposure via prior transaction history.
+- Reference the specific reason code(s) and risk score.
+- Keep the explanation strictly factual, professional, and audit-ready (1-2 sentences maximum).
+- Do not speculate or recommend actions."""
 
     response = client.models.generate_content(
         model="gemini-3.6-flash",

@@ -37,5 +37,7 @@ CREATE TABLE blocks (
 );
 
 CREATE INDEX idx_compliance_decisions_created_at ON compliance_decisions(created_at DESC);
+CREATE INDEX idx_compliance_decisions_sender ON compliance_decisions(LOWER(sender));
+CREATE INDEX idx_compliance_decisions_recipient ON compliance_decisions(LOWER(recipient));
 CREATE INDEX idx_blocks_block_number ON blocks(block_number DESC);
 CREATE INDEX idx_address_attributions_entity ON address_attributions(entity_id);

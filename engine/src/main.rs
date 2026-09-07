@@ -29,8 +29,6 @@ const SANCTIONS_SET_KEY: &str = "sanctioned_addresses";
 
 async fn load_sanctions_into_redis(db: &PgPool, redis_client: &redis::Client) -> eyre::Result<usize> {
     let mut conn = redis_client.get_multiplexed_async_connection().await?;
-
-    // Clear any stale cache, then repopulate from Postgres (source of truth)
     let _: () = conn.del(SANCTIONS_SET_KEY).await.unwrap_or(());
 
     let rows: Vec<(String,)> = sqlx::query_as("SELECT address FROM address_attributions")
@@ -43,10 +41,33 @@ async fn load_sanctions_into_redis(db: &PgPool, redis_client: &redis::Client) ->
 
     let addresses: Vec<String> = rows.into_iter().map(|(a,)| a).collect();
     let count = addresses.len();
-
     let _: () = conn.sadd(SANCTIONS_SET_KEY, addresses).await?;
 
     Ok(count)
+}
+
+// Check if an address has indirect exposure to a sanctioned entity (1-hop graph walk).
+// An address is indirectly exposed if it has ever sent to, or received from,
+// an address present in address_attributions, as evidenced in compliance_decisions.
+async fn has_indirect_exposure(pool: &PgPool, address: &str) -> bool {
+    let result: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM compliance_decisions cd
+        JOIN address_attributions aa
+          ON LOWER(aa.address) = CASE
+               WHEN LOWER(cd.sender) = $1 THEN LOWER(cd.recipient)
+               WHEN LOWER(cd.recipient) = $1 THEN LOWER(cd.sender)
+             END
+        WHERE (LOWER(cd.sender) = $1 OR LOWER(cd.recipient) = $1)
+        "#,
+    )
+    .bind(address)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    result.unwrap_or(0) > 0
 }
 
 #[tokio::main]
@@ -97,12 +118,12 @@ async fn screen_transaction(
         .await
         .expect("failed to get redis connection");
 
-    let sender_hit: bool = redis_conn
+    let sender_direct_hit: bool = redis_conn
         .sismember(SANCTIONS_SET_KEY, &sender_lower)
         .await
         .unwrap_or(false);
 
-    let recipient_hit: bool = redis_conn
+    let recipient_direct_hit: bool = redis_conn
         .sismember(SANCTIONS_SET_KEY, &recipient_lower)
         .await
         .unwrap_or(false);
@@ -111,15 +132,35 @@ async fn screen_transaction(
     let mut decision = "ALLOW".to_string();
     let mut risk_score = 0;
 
-    if sender_hit {
+    if sender_direct_hit {
         reasons.push("SANCTIONED_SENDER".to_string());
         decision = "BLOCK".to_string();
         risk_score = 98;
     }
-    if recipient_hit {
+    if recipient_direct_hit {
         reasons.push("SANCTIONED_RECIPIENT".to_string());
         decision = "BLOCK".to_string();
         risk_score = 98;
+    }
+
+    // Direct sanctioned matches stay BLOCK (risk 98).
+    // Only check indirect risk if there's no direct match — direct match always wins.
+    if decision == "ALLOW" {
+        let (sender_exposed, recipient_exposed) = tokio::join!(
+            has_indirect_exposure(&state.db, &sender_lower),
+            has_indirect_exposure(&state.db, &recipient_lower),
+        );
+
+        if sender_exposed || recipient_exposed {
+            if sender_exposed {
+                reasons.push("INDIRECT_SENDER_EXPOSURE".to_string());
+            }
+            if recipient_exposed {
+                reasons.push("INDIRECT_RECIPIENT_EXPOSURE".to_string());
+            }
+            decision = "FLAG".to_string();
+            risk_score = 55;
+        }
     }
 
     let response = ScreenResponse {
@@ -135,8 +176,8 @@ async fn screen_transaction(
          ON CONFLICT (tx_hash) DO NOTHING",
     )
     .bind(&req.tx_hash)
-    .bind(&req.sender)
-    .bind(&req.recipient)
+    .bind(&sender_lower)
+    .bind(&recipient_lower)
     .bind(&decision)
     .bind(risk_score)
     .bind(&reasons)

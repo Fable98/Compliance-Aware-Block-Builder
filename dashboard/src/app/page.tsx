@@ -93,6 +93,7 @@ export default function Dashboard() {
   }, []);
 
   const allowCount = stats?.decisions.find((d) => d.decision === 'ALLOW')?.count ?? '0';
+  const flagCount = stats?.decisions.find((d) => d.decision === 'FLAG')?.count ?? '0';
   const blockCount = stats?.decisions.find((d) => d.decision === 'BLOCK')?.count ?? '0';
   const exposedBlocks = stats?.blocks.find((b) => b.compliance_status === 'EXPOSED_EXTERNAL')?.count ?? '0';
 
@@ -101,10 +102,14 @@ export default function Dashboard() {
       <h1 className="text-2xl font-bold mb-1 text-white">Compliance-Aware Block Builder</h1>
       <p className="text-neutral-400 mb-6">Pre-execution screening & post-execution proposer attribution</p>
 
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-4 gap-4 mb-8">
         <Card className="bg-neutral-900 border-neutral-800 text-white">
           <CardHeader><CardTitle className="text-neutral-300 text-sm">Allowed Transactions</CardTitle></CardHeader>
           <CardContent><p className="text-3xl font-bold text-green-500">{allowCount}</p></CardContent>
+        </Card>
+        <Card className="bg-neutral-900 border-neutral-800 text-white">
+          <CardHeader><CardTitle className="text-neutral-300 text-sm">Flagged (Indirect Risk)</CardTitle></CardHeader>
+          <CardContent><p className="text-3xl font-bold text-yellow-500">{flagCount}</p></CardContent>
         </Card>
         <Card className="bg-neutral-900 border-neutral-800 text-white">
           <CardHeader><CardTitle className="text-neutral-300 text-sm">Blocked Transactions</CardTitle></CardHeader>
